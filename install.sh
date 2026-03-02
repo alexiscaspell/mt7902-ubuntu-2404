@@ -37,7 +37,7 @@ check_dependencies() {
     info "Checking dependencies..."
     local missing=()
 
-    for pkg in dkms build-essential wget; do
+    for pkg in dkms build-essential wget mokutil; do
         if ! dpkg -s "$pkg" &>/dev/null; then
             missing+=("$pkg")
         fi
@@ -125,6 +125,51 @@ build_and_install() {
     dkms status -m "$MODULE_NAME" -v "$MODULE_VERSION"
 }
 
+enroll_mok_key() {
+    local mok_der="/var/lib/shim-signed/mok/MOK.der"
+
+    if [[ ! -f "$mok_der" ]]; then
+        error "MOK key not found at $mok_der. Cannot enroll for Secure Boot."
+    fi
+
+    warn "Secure Boot is blocking unsigned/untrusted kernel modules."
+    warn "We need to enroll the DKMS signing key into your UEFI firmware."
+    echo ""
+    info "You will be asked to set a ONE-TIME password."
+    info "Remember it — you'll need it on the next reboot."
+    echo ""
+
+    mokutil --import "$mok_der"
+
+    echo ""
+    info "MOK key enrolled. To complete the process:"
+    echo ""
+    echo "  1. Reboot the machine"
+    echo "  2. A blue 'MOK Manager' screen will appear"
+    echo "  3. Select 'Enroll MOK' -> 'Continue' -> 'Yes'"
+    echo "  4. Enter the password you just set"
+    echo "  5. Select 'Reboot'"
+    echo ""
+    info "After reboot, the driver will load automatically."
+    info "You can verify with: lsmod | grep mt79"
+    echo ""
+
+    read -rp "Reboot now? [y/N] " answer
+    if [[ "$answer" =~ ^[Yy] ]]; then
+        info "Rebooting..."
+        reboot
+    else
+        info "Remember to reboot to complete MOK enrollment."
+    fi
+}
+
+is_secure_boot_enabled() {
+    if command -v mokutil &>/dev/null; then
+        mokutil --sb-state 2>/dev/null | grep -qi "secureboot enabled" && return 0
+    fi
+    return 1
+}
+
 load_modules() {
     info "Loading kernel modules..."
 
@@ -133,13 +178,27 @@ load_modules() {
         modprobe -r "$mod" 2>/dev/null || true
     done
 
-    modprobe mt7921e
-
-    if lsmod | grep -q mt7921e; then
-        info "Driver loaded successfully!"
+    local modprobe_output
+    if modprobe_output="$(modprobe mt7921e 2>&1)"; then
+        if lsmod | grep -q mt7921e; then
+            info "Driver loaded successfully!"
+        else
+            warn "mt7921e module loaded but may not have bound to any device"
+            warn "Check 'lspci -nnk | grep -A3 7902' and 'dmesg | tail -30'"
+        fi
     else
-        warn "mt7921e module loaded but may not have bound to any device"
-        warn "Check 'lspci -nnk | grep -A3 7902' and 'dmesg | tail -30'"
+        if echo "$modprobe_output" | grep -qi "key was rejected\|required key not available"; then
+            warn "Module loading rejected: $modprobe_output"
+            echo ""
+            if is_secure_boot_enabled; then
+                info "Secure Boot is enabled. The DKMS signing key needs to be enrolled."
+                enroll_mok_key
+            else
+                error "Module signature rejected but Secure Boot appears disabled. Check 'dmesg | tail -30' for details."
+            fi
+        else
+            error "Failed to load mt7921e: $modprobe_output"
+        fi
     fi
 }
 
