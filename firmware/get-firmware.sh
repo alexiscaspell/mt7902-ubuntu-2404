@@ -1,32 +1,28 @@
 #!/bin/bash
-set -ex
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FW_DIR="/lib/firmware/mediatek"
+FW_RAM="WIFI_RAM_CODE_MT7902_1.bin"
+FW_PATCH="WIFI_MT7902_patch_mcu_1_1_hdr.bin"
 
-URL_FILE="$SCRIPT_DIR/acer.url"
-URL="$(cat "$URL_FILE")"
-ZIP="$(basename "${URL%%\?*}" | sed 'y/+/ /; s/%/\\x/g')"
-ZIP="$(echo -e "$ZIP")"
+GH_BASE="https://raw.githubusercontent.com/OnlineLearningTutorials/mt7902_temp/main/mt7902_firmware/latest"
 
-TMPDIR="$(mktemp -d)"
-trap "rm -rf '$TMPDIR'" EXIT
+echo "Installing MT7902 firmware to $FW_DIR..."
+mkdir -p "$FW_DIR"
 
-echo "Downloading MT7902 firmware from Acer..."
-wget -O "$TMPDIR/$ZIP" "$URL"
+for fw in "$FW_RAM" "$FW_PATCH"; do
+    if [[ -f "$FW_DIR/$fw" ]]; then
+        echo "  Already exists: $FW_DIR/$fw"
+        continue
+    fi
 
-echo "Extracting firmware..."
-unzip -o "$TMPDIR/$ZIP" -d "$TMPDIR"
-
-echo "Installing firmware to $FW_DIR..."
-sudo mkdir -p "$FW_DIR"
-
-find "$TMPDIR" -name '*MT7902*' -exec sudo cp -v {} "$FW_DIR/" \;
-
-echo "Installed firmware files:"
-ls -la "$FW_DIR"/*MT7902* 2>/dev/null || echo "WARNING: No MT7902 firmware files found in archive"
+    echo "  Downloading $fw..."
+    wget -q --show-progress -O "$FW_DIR/$fw" "$GH_BASE/$fw" || {
+        echo "ERROR: Failed to download $fw"
+        exit 1
+    }
+done
 
 echo ""
-echo "Expected files:"
-echo "  $FW_DIR/WIFI_RAM_CODE_MT7902_1.bin"
-echo "  $FW_DIR/WIFI_MT7902_patch_mcu_1_1_hdr.bin"
+echo "Firmware installed:"
+ls -la "$FW_DIR/$FW_RAM" "$FW_DIR/$FW_PATCH"

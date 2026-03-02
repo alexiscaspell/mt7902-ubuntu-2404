@@ -46,7 +46,7 @@ If you prefer to do it step by step:
 
 ### 1. Install firmware
 
-The MT7902 firmware is not yet in `linux-firmware`. Download it from the Acer Windows driver package:
+The MT7902 firmware is not yet in `linux-firmware`. Download it from [OnlineLearningTutorials/mt7902_temp](https://github.com/OnlineLearningTutorials/mt7902_temp):
 
 ```bash
 cd firmware

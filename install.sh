@@ -37,7 +37,7 @@ check_dependencies() {
     info "Checking dependencies..."
     local missing=()
 
-    for pkg in dkms build-essential wget unzip; do
+    for pkg in dkms build-essential wget; do
         if ! dpkg -s "$pkg" &>/dev/null; then
             missing+=("$pkg")
         fi
@@ -60,47 +60,29 @@ check_dependencies() {
 install_firmware() {
     info "Checking firmware..."
 
+    local GH_BASE="https://raw.githubusercontent.com/OnlineLearningTutorials/mt7902_temp/main/mt7902_firmware/latest"
+
     if [[ -f "$FW_DIR/$FW_RAM" && -f "$FW_DIR/$FW_PATCH" ]]; then
         info "Firmware already installed:"
-        ls -la "$FW_DIR"/*MT7902* 2>/dev/null
+        ls -la "$FW_DIR/$FW_RAM" "$FW_DIR/$FW_PATCH"
         return 0
     fi
 
-    info "Downloading MT7902 firmware from Acer..."
-    local url_file="$SCRIPT_DIR/firmware/acer.url"
-    if [[ ! -f "$url_file" ]]; then
-        error "Firmware URL file not found: $url_file"
-    fi
-
-    local url
-    url="$(cat "$url_file")"
-
-    local tmpdir
-    tmpdir="$(mktemp -d)"
-    trap "rm -rf '$tmpdir'" RETURN
-
-    local zip_name
-    zip_name="$(basename "${url%%\?*}" | sed 'y/+/ /; s/%/\\x/g')"
-    zip_name="$(echo -e "$zip_name")"
-
-    wget -q --show-progress -O "$tmpdir/$zip_name" "$url" || \
-        error "Failed to download firmware. Check your internet connection."
-
-    unzip -qo "$tmpdir/$zip_name" -d "$tmpdir"
-
+    info "Downloading MT7902 firmware from GitHub..."
     mkdir -p "$FW_DIR"
-    local found=0
-    while IFS= read -r -d '' fw_file; do
-        cp -v "$fw_file" "$FW_DIR/"
-        found=1
-    done < <(find "$tmpdir" -name '*MT7902*' -print0)
 
-    if [[ $found -eq 0 ]]; then
-        error "No MT7902 firmware files found in the downloaded archive"
-    fi
+    for fw in "$FW_RAM" "$FW_PATCH"; do
+        if [[ -f "$FW_DIR/$fw" ]]; then
+            info "  Already exists: $fw"
+            continue
+        fi
+        info "  Downloading $fw..."
+        wget -q --show-progress -O "$FW_DIR/$fw" "$GH_BASE/$fw" || \
+            error "Failed to download $fw. Check your internet connection."
+    done
 
     info "Firmware installed:"
-    ls -la "$FW_DIR"/*MT7902* 2>/dev/null
+    ls -la "$FW_DIR/$FW_RAM" "$FW_DIR/$FW_PATCH"
 }
 
 setup_dkms_source() {
