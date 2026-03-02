@@ -30,7 +30,8 @@ mt792x-lib-y := \
 # --- mt7921-common (includes MT7902 support) ---
 mt7921-common-y := \
 	mt7921/mac.o mt7921/mcu.o mt7921/main.o mt7921/init.o \
-	mt7921/debugfs.o mt7921/testmode.o
+	mt7921/debugfs.o
+mt7921-common-$(CONFIG_NL80211_TESTMODE) += mt7921/testmode.o
 
 # --- mt7921e PCIe driver ---
 mt7921e-y := mt7921/pci.o mt7921/pci_mac.o mt7921/pci_mcu.o
