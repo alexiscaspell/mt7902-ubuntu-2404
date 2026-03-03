@@ -218,15 +218,26 @@ is_secure_boot_enabled() {
     return 1
 }
 
+try_unload() {
+    local mod="$1"
+    lsmod | grep -q "^${mod}[[:space:]]" || return 0
+    timeout 5 modprobe -r "$mod" 2>/dev/null || true
+}
+
 load_module() {
     info "Loading kernel module..."
 
-    modprobe -r mt7902 2>/dev/null || true
+    try_unload mt7902
 
     local modules_unload="mt7921e mt7921_common mt792x_lib mt76_connac_lib mt76"
     for mod in $modules_unload; do
-        modprobe -r "$mod" 2>/dev/null || true
+        try_unload "$mod"
     done
+
+    if lsmod | grep -q "^mt7902[[:space:]]"; then
+        info "Driver already loaded"
+        return 0
+    fi
 
     local modprobe_output
     if modprobe_output="$(modprobe mt7902 2>&1)"; then
