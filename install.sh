@@ -110,6 +110,11 @@ blacklist mt76
 CONF
 }
 
+enable_autoload() {
+    info "Enabling mt7902 module autoload at boot..."
+    echo "mt7902" > /etc/modules-load.d/mt7902.conf
+}
+
 setup_dkms_source() {
     info "Setting up DKMS source link..."
 
@@ -287,7 +292,8 @@ do_uninstall() {
     fi
 
     rm -f /etc/modprobe.d/blacklist-mt76-mt7902.conf 2>/dev/null || true
-    info "Removed mt76 blacklist"
+    rm -f /etc/modules-load.d/mt7902.conf 2>/dev/null || true
+    info "Removed mt76 blacklist and autoload config"
 
     info "Uninstall complete. Firmware files left in $FW_DIR (remove manually if desired)"
     info "Reboot to restore the in-kernel mt76 driver"
@@ -317,6 +323,7 @@ main() {
     install_firmware
     remove_old_mt76_dkms
     blacklist_mt76_modules
+    enable_autoload
     setup_dkms_source
     build_and_install
     load_module
