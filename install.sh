@@ -133,8 +133,19 @@ setup_dkms_source() {
 build_and_install() {
     info "Registering with DKMS..."
 
-    if dkms status -m "$MODULE_NAME" -v "$MODULE_VERSION" 2>/dev/null | grep -q "$MODULE_NAME"; then
-        warn "Removing previous DKMS registration..."
+    local dkms_state
+    dkms_state="$(dkms status -m "$MODULE_NAME" -v "$MODULE_VERSION" 2>/dev/null || true)"
+
+    if [[ -n "$dkms_state" ]]; then
+        warn "DKMS already contains ${MODULE_NAME}-${MODULE_VERSION}:"
+        echo "  $dkms_state"
+        echo ""
+        read -rp "Overwrite existing installation? [Y/n] " answer
+        if [[ "$answer" =~ ^[Nn] ]]; then
+            info "Skipping DKMS build. Existing installation kept."
+            return 0
+        fi
+        info "Removing previous DKMS registration..."
         dkms remove -m "$MODULE_NAME" -v "$MODULE_VERSION" --all 2>/dev/null || true
     fi
 
