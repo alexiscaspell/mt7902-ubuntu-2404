@@ -130,15 +130,22 @@ setup_dkms_source() {
     info "Created: $SRC_LINK -> $SCRIPT_DIR"
 }
 
+clean_dkms() {
+    dkms remove -m "$MODULE_NAME" -v "$MODULE_VERSION" --all 2>/dev/null || true
+    rm -rf "/var/lib/dkms/${MODULE_NAME}/${MODULE_VERSION}" 2>/dev/null || true
+    rm -rf "/var/lib/dkms/${MODULE_NAME}" 2>/dev/null || true
+}
+
 build_and_install() {
     info "Registering with DKMS..."
 
     local dkms_state
     dkms_state="$(dkms status -m "$MODULE_NAME" -v "$MODULE_VERSION" 2>/dev/null || true)"
+    local dkms_tree="/var/lib/dkms/${MODULE_NAME}/${MODULE_VERSION}"
 
-    if [[ -n "$dkms_state" ]]; then
-        warn "DKMS already contains ${MODULE_NAME}-${MODULE_VERSION}:"
-        echo "  $dkms_state"
+    if [[ -n "$dkms_state" || -d "$dkms_tree" ]]; then
+        warn "DKMS already contains ${MODULE_NAME}-${MODULE_VERSION}"
+        [[ -n "$dkms_state" ]] && echo "  Status: $dkms_state"
         echo ""
         read -rp "Overwrite existing installation? [Y/n] " answer
         if [[ "$answer" =~ ^[Nn] ]]; then
@@ -146,7 +153,7 @@ build_and_install() {
             return 0
         fi
         info "Removing previous DKMS registration..."
-        dkms remove -m "$MODULE_NAME" -v "$MODULE_VERSION" --all 2>/dev/null || true
+        clean_dkms
     fi
 
     dkms add -m "$MODULE_NAME" -v "$MODULE_VERSION"
