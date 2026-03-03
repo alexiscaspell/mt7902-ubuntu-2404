@@ -5,6 +5,7 @@
 #
 # Usage:
 #   sudo bash install.sh             # Install
+#   sudo bash install.sh -v          # Install with verbose output
 #   sudo bash install.sh --uninstall # Remove everything
 #
 
@@ -220,13 +221,22 @@ is_secure_boot_enabled() {
 
 try_unload() {
     local mod="$1"
-    lsmod | grep -q "^${mod}[[:space:]]" || return 0
-    timeout 5 modprobe -r "$mod" 2>/dev/null || true
+    if ! lsmod | grep -q "^${mod}[[:space:]]"; then
+        [[ -n "${VERBOSE:-}" ]] && info "  $mod: not loaded, skip"
+        return 0
+    fi
+    [[ -n "${VERBOSE:-}" ]] && info "  $mod: unloading (timeout 5s)..."
+    if timeout 5 modprobe -r "$mod" 2>/dev/null; then
+        [[ -n "${VERBOSE:-}" ]] && info "  $mod: unloaded"
+    else
+        warn "  $mod: could not unload (timeout or in use)"
+    fi
 }
 
 load_module() {
     info "Loading kernel module..."
 
+    [[ -n "${VERBOSE:-}" ]] && info "Step 1: Unloading conflicting modules..."
     try_unload mt7902
 
     local modules_unload="mt7921e mt7921_common mt792x_lib mt76_connac_lib mt76"
@@ -239,8 +249,10 @@ load_module() {
         return 0
     fi
 
+    [[ -n "${VERBOSE:-}" ]] && info "Step 2: Loading mt7902 module..."
     local modprobe_output
-    if modprobe_output="$(modprobe mt7902 2>&1)"; then
+    if modprobe_output="$(timeout 120 modprobe -v mt7902 2>&1)"; then
+        [[ -n "${VERBOSE:-}" ]] && info "modprobe output: $modprobe_output"
         if lsmod | grep -q mt7902; then
             info "Driver loaded successfully!"
         else
@@ -248,7 +260,12 @@ load_module() {
             warn "Check 'dmesg | tail -30' for details"
         fi
     else
-        if echo "$modprobe_output" | grep -qi "key was rejected\|required key not available"; then
+        local exit_code=$?
+        if [[ $exit_code -eq 124 ]]; then
+            warn "modprobe timed out after 120 seconds"
+            warn "The driver may need a reboot to load cleanly."
+            warn "Check 'sudo dmesg | tail -30' for details."
+        elif echo "$modprobe_output" | grep -qi "key was rejected\|required key not available"; then
             warn "Module loading rejected: $modprobe_output"
             echo ""
             if is_secure_boot_enabled; then
@@ -258,7 +275,8 @@ load_module() {
                 error "Module signature rejected but Secure Boot appears disabled. Check 'dmesg | tail -30' for details."
             fi
         else
-            error "Failed to load mt7902: $modprobe_output"
+            warn "Failed to load mt7902 (exit code $exit_code): $modprobe_output"
+            warn "The module is installed. Try rebooting to load it cleanly."
         fi
     fi
 }
@@ -322,6 +340,11 @@ main() {
     if [[ "${1:-}" == "--uninstall" || "${1:-}" == "-u" ]]; then
         do_uninstall
         exit 0
+    fi
+
+    if [[ "${1:-}" == "--verbose" || "${1:-}" == "-v" ]]; then
+        VERBOSE=1
+        info "Verbose mode enabled"
     fi
 
     local kver
