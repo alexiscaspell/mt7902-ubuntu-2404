@@ -1,11 +1,11 @@
 #!/bin/bash
 #
-# MT7902 DKMS driver - Full installation script
-# Installs firmware + builds and installs the DKMS kernel modules
+# MT7902 gen4 driver - Full installation script
+# Installs firmware + builds and installs the DKMS kernel module
 #
 # Usage:
-#   sudo bash install.sh          # Install for current kernel
-#   sudo bash install.sh --uninstall  # Remove everything
+#   sudo bash install.sh             # Install
+#   sudo bash install.sh --uninstall # Remove everything
 #
 
 set -euo pipefail
@@ -14,9 +14,7 @@ MODULE_NAME="mt7902"
 MODULE_VERSION="1.0.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_LINK="/usr/src/${MODULE_NAME}-${MODULE_VERSION}"
-FW_DIR="/lib/firmware/mediatek"
-FW_RAM="WIFI_RAM_CODE_MT7902_1.bin"
-FW_PATCH="WIFI_MT7902_patch_mcu_1_1_hdr.bin"
+FW_DIR="/lib/firmware/mediatek/mt7902"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -37,7 +35,7 @@ check_dependencies() {
     info "Checking dependencies..."
     local missing=()
 
-    for pkg in dkms build-essential wget mokutil; do
+    for pkg in dkms build-essential mokutil; do
         if ! dpkg -s "$pkg" &>/dev/null; then
             missing+=("$pkg")
         fi
@@ -58,31 +56,58 @@ check_dependencies() {
 }
 
 install_firmware() {
-    info "Checking firmware..."
-
-    local GH_BASE="https://raw.githubusercontent.com/OnlineLearningTutorials/mt7902_temp/main/mt7902_firmware/latest"
-
-    if [[ -f "$FW_DIR/$FW_RAM" && -f "$FW_DIR/$FW_PATCH" ]]; then
-        info "Firmware already installed:"
-        ls -la "$FW_DIR/$FW_RAM" "$FW_DIR/$FW_PATCH"
-        return 0
-    fi
-
-    info "Downloading MT7902 firmware from GitHub..."
+    info "Installing firmware..."
     mkdir -p "$FW_DIR"
 
-    for fw in "$FW_RAM" "$FW_PATCH"; do
-        if [[ -f "$FW_DIR/$fw" ]]; then
-            info "  Already exists: $fw"
-            continue
-        fi
-        info "  Downloading $fw..."
-        wget -q --show-progress -O "$FW_DIR/$fw" "$GH_BASE/$fw" || \
-            error "Failed to download $fw. Check your internet connection."
+    local fw_src="$SCRIPT_DIR/firmware"
+    if [[ ! -d "$fw_src" ]]; then
+        error "Firmware directory not found: $fw_src"
+    fi
+
+    local count=0
+    for fw in "$fw_src"/*.bin; do
+        [[ -f "$fw" ]] || continue
+        local fname
+        fname="$(basename "$fw")"
+        cp -v "$fw" "$FW_DIR/$fname"
+        count=$((count + 1))
     done
 
-    info "Firmware installed:"
-    ls -la "$FW_DIR/$FW_RAM" "$FW_DIR/$FW_PATCH"
+    if [[ $count -eq 0 ]]; then
+        error "No firmware .bin files found in $fw_src"
+    fi
+
+    info "Installed $count firmware file(s) to $FW_DIR"
+}
+
+remove_old_mt76_dkms() {
+    if dkms status -m "mt7902" -v "1.0.0" 2>/dev/null | grep -q "mt7902"; then
+        local old_src="/usr/src/mt7902-1.0.0"
+        if [[ -d "$old_src/mt76" ]]; then
+            warn "Removing old mt76-based DKMS module..."
+            dkms remove -m mt7902 -v 1.0.0 --all 2>/dev/null || true
+            rm -rf "$old_src"
+        fi
+    fi
+
+    local dkms_updates="/lib/modules/$(uname -r)/updates/dkms"
+    rm -f "$dkms_updates"/mt76*.ko.zst 2>/dev/null || true
+    rm -f "$dkms_updates"/mt792*.ko.zst 2>/dev/null || true
+    rm -f "$dkms_updates"/mt7921*.ko.zst 2>/dev/null || true
+
+    rm -f /etc/modprobe.d/blacklist-mt7902.conf 2>/dev/null || true
+}
+
+blacklist_mt76_modules() {
+    info "Blacklisting in-kernel mt76 modules to avoid conflicts..."
+    cat > /etc/modprobe.d/blacklist-mt76-mt7902.conf <<'CONF'
+# Prevent in-kernel mt76 modules from loading (conflicts with gen4 mt7902 driver)
+blacklist mt7921e
+blacklist mt7921_common
+blacklist mt792x_lib
+blacklist mt76_connac_lib
+blacklist mt76
+CONF
 }
 
 setup_dkms_source() {
@@ -115,10 +140,10 @@ build_and_install() {
 
     dkms add -m "$MODULE_NAME" -v "$MODULE_VERSION"
 
-    info "Building modules (this may take a minute)..."
+    info "Building module (this may take a few minutes)..."
     dkms build -m "$MODULE_NAME" -v "$MODULE_VERSION"
 
-    info "Installing modules..."
+    info "Installing module..."
     dkms install -m "$MODULE_NAME" -v "$MODULE_VERSION"
 
     info "DKMS status:"
@@ -151,7 +176,7 @@ enroll_mok_key() {
     echo "  5. Select 'Reboot'"
     echo ""
     info "After reboot, the driver will load automatically."
-    info "You can verify with: lsmod | grep mt79"
+    info "You can verify with: lsmod | grep mt7902"
     echo ""
 
     read -rp "Reboot now? [y/N] " answer
@@ -170,21 +195,23 @@ is_secure_boot_enabled() {
     return 1
 }
 
-load_modules() {
-    info "Loading kernel modules..."
+load_module() {
+    info "Loading kernel module..."
 
-    local modules_unload="mt7921e mt7921-common mt792x-lib mt76-connac-lib mt76"
+    modprobe -r mt7902 2>/dev/null || true
+
+    local modules_unload="mt7921e mt7921_common mt792x_lib mt76_connac_lib mt76"
     for mod in $modules_unload; do
         modprobe -r "$mod" 2>/dev/null || true
     done
 
     local modprobe_output
-    if modprobe_output="$(modprobe mt7921e 2>&1)"; then
-        if lsmod | grep -q mt7921e; then
+    if modprobe_output="$(modprobe mt7902 2>&1)"; then
+        if lsmod | grep -q mt7902; then
             info "Driver loaded successfully!"
         else
-            warn "mt7921e module loaded but may not have bound to any device"
-            warn "Check 'lspci -nnk | grep -A3 7902' and 'dmesg | tail -30'"
+            warn "modprobe succeeded but module not in lsmod"
+            warn "Check 'dmesg | tail -30' for details"
         fi
     else
         if echo "$modprobe_output" | grep -qi "key was rejected\|required key not available"; then
@@ -197,7 +224,7 @@ load_modules() {
                 error "Module signature rejected but Secure Boot appears disabled. Check 'dmesg | tail -30' for details."
             fi
         else
-            error "Failed to load mt7921e: $modprobe_output"
+            error "Failed to load mt7902: $modprobe_output"
         fi
     fi
 }
@@ -207,35 +234,31 @@ show_status() {
     info "=== Installation complete ==="
     echo ""
 
-    echo "Kernel modules:"
-    lsmod | grep -E 'mt76|mt7921|mt792x' 2>/dev/null || echo "  (none loaded)"
+    echo "Kernel module:"
+    lsmod | grep -E 'mt7902' 2>/dev/null || echo "  (not loaded)"
     echo ""
 
     echo "PCI device status:"
-    lspci -nnk 2>/dev/null | grep -A3 -i '7902' || echo "  No MT7902 device found (is this the right machine?)"
+    lspci -nnk 2>/dev/null | grep -A3 -i '7902' || echo "  No MT7902 device found"
+    echo ""
+
+    echo "WiFi interface:"
+    ip link show 2>/dev/null | grep -E 'wlan|wlp' || echo "  No WiFi interface found (may appear after reboot)"
     echo ""
 
     echo "Recent dmesg:"
-    dmesg | grep -i 'mt79' | tail -10 || echo "  (no mt79 messages)"
+    dmesg 2>/dev/null | grep -iE 'mt7902|wlan' | tail -10 || echo "  (no messages)"
     echo ""
-
-    info "If WiFi doesn't work, check:"
-    echo "  1. Firmware: ls -la /lib/firmware/mediatek/*MT7902*"
-    echo "  2. Device:   lspci -nn | grep -i network"
-    echo "  3. Logs:     dmesg | grep -i mt79"
 }
 
 do_uninstall() {
-    info "Uninstalling MT7902 DKMS driver..."
+    info "Uninstalling MT7902 gen4 driver..."
 
-    local modules_unload="mt7921e mt7921-common mt792x-lib mt76-connac-lib mt76"
-    for mod in $modules_unload; do
-        modprobe -r "$mod" 2>/dev/null || true
-    done
+    modprobe -r mt7902 2>/dev/null || true
 
     if dkms status -m "$MODULE_NAME" -v "$MODULE_VERSION" 2>/dev/null | grep -q "$MODULE_NAME"; then
         dkms remove -m "$MODULE_NAME" -v "$MODULE_VERSION" --all
-        info "DKMS modules removed"
+        info "DKMS module removed"
     else
         info "No DKMS registration found"
     fi
@@ -245,14 +268,17 @@ do_uninstall() {
         info "Removed source link: $SRC_LINK"
     fi
 
+    rm -f /etc/modprobe.d/blacklist-mt76-mt7902.conf 2>/dev/null || true
+    info "Removed mt76 blacklist"
+
     info "Uninstall complete. Firmware files left in $FW_DIR (remove manually if desired)"
-    info "Reboot or run 'sudo modprobe mt7921e' to load the in-kernel driver"
+    info "Reboot to restore the in-kernel mt76 driver"
 }
 
 main() {
     echo "=========================================="
-    echo " MT7902 WiFi 6E DKMS Driver Installer"
-    echo " Based on upstream mt76/mt7921 (kernel v6.17)"
+    echo " MT7902 WiFi 6E Driver Installer"
+    echo " Based on MediaTek gen4-mt79xx"
     echo "=========================================="
     echo ""
 
@@ -267,23 +293,15 @@ main() {
     kver="$(uname -r)"
     info "Kernel: $kver"
     info "Source: $SCRIPT_DIR"
-
-    local kver_major kver_minor
-    kver_major="$(echo "$kver" | cut -d. -f1)"
-    kver_minor="$(echo "$kver" | cut -d. -f2)"
-
-    if [[ "$kver_major" -lt 6 ]] || { [[ "$kver_major" -eq 6 ]] && [[ "$kver_minor" -lt 17 ]]; }; then
-        warn "Kernel $kver is older than 6.17. This driver was built for 6.17+."
-        warn "It may not compile or work correctly on older kernels."
-        read -rp "Continue anyway? [y/N] " answer
-        [[ "$answer" =~ ^[Yy] ]] || exit 1
-    fi
+    echo ""
 
     check_dependencies
     install_firmware
+    remove_old_mt76_dkms
+    blacklist_mt76_modules
     setup_dkms_source
     build_and_install
-    load_modules
+    load_module
     show_status
 }
 

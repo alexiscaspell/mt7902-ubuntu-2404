@@ -1,22 +1,14 @@
-*.tar.xz
-*.tgz
-*.bz
-*.zip
-
-# Build artifacts
 *.o
+*.o.cmd
+*.o.d
+*.ko
+*.ko.cmd
 *.mod
 *.mod.c
-*.cmd
-*.ko
-*.ko.zst
-*.rej
-*.order
-*.symvers
-.tmp_versions/
+*.mod.o
+*.mod.cmd
+Module.symvers
+modules.order
+.modules.order.cmd
+.Module.symvers.cmd
 
-# Firmware downloads (firmware scripts are tracked, not the binaries)
-firmware/*.zip
-firmware/*.bin
-
-.backup/
